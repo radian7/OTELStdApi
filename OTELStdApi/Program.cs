@@ -28,7 +28,7 @@ var resource = resourceBuilder.Build();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(); // http://localhost:5125/swagger/index.html
 builder.Services.AddOpenApi();
 
 // OpenTelemetry - traces i metrics
