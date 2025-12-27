@@ -11,6 +11,7 @@ var builder = WebApplication.CreateBuilder(args);
 var serviceName = "OTELStdApi";
 var serviceVersion = "1.0.0";
 var alloyEndpoint = new Uri("http://localhost:4317"); // gRPC
+//var alloyEndpoint = new Uri("http://localhost:4318"); // http
 
 // Resource builder - wspólne atrybuty dla wszystkich sygna³ów
 var resourceBuilder = ResourceBuilder.CreateDefault()
