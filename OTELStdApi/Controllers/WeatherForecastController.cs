@@ -32,10 +32,15 @@ namespace OTELStdApi.Controllers
         [HttpGet(Name = "GetWeatherForecast")]
         public IEnumerable<WeatherForecast> Get()
         {
-
            // Rozpocznij w³asny span
             using var activity = ActivitySource.StartActivity("GetWeatherForecast");
-            //activity?.SetTag("order.customer_id", request.CustomerId);
+            
+            // Dodaj baggage z kontekstu
+            var requestId = HttpContext.Items["RequestId"]?.ToString() ?? Activity.Current?.Id ?? "unknown";
+            var environment = HttpContext.Items["DeploymentEnvironment"]?.ToString() ?? "unknown";
+            
+            activity?.SetTag("request.id", requestId);
+            activity?.SetTag("deployment.environment", environment);
 
             _logger.LogInformation("Getting GetWeatherForecast");
                         
@@ -55,6 +60,13 @@ namespace OTELStdApi.Controllers
             // Rozpocznij w³asny span
             using var activity = ActivitySource.StartActivity("CreateOrder");
             activity?.SetTag("order.customer_id", request.CustomerId);
+
+            // Dodaj baggage z kontekstu
+            var requestId = HttpContext.Items["RequestId"]?.ToString() ?? Activity.Current?.Id ?? "unknown";
+            var environment = HttpContext.Items["DeploymentEnvironment"]?.ToString() ?? "unknown";
+            
+            activity?.SetTag("request.id", requestId);
+            activity?.SetTag("deployment.environment", environment);
 
             var stopwatch = Stopwatch.StartNew();
 

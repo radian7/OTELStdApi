@@ -58,6 +58,13 @@ namespace OTELStdApi.Controllers
             using var activity = ActivitySource.StartActivity("GetProductById");
             activity?.SetTag("product.id", id);
 
+            // Dodaj baggage z kontekstu
+            var requestId = HttpContext.Items["RequestId"]?.ToString() ?? Activity.Current?.Id ?? "unknown";
+            var environment = HttpContext.Items["DeploymentEnvironment"]?.ToString() ?? "unknown";
+            
+            activity?.SetTag("request.id", requestId);
+            activity?.SetTag("deployment.environment", environment);
+
             var stopwatch = Stopwatch.StartNew();
 
             _logger.LogInformation("Fetching product with ID {ProductId}", id);
@@ -81,7 +88,11 @@ namespace OTELStdApi.Controllers
                     {
                         apiCallActivity?.SetTag("http.method", "GET");
                         apiCallActivity?.SetTag("http.url", $"/products/{id}");
+                        apiCallActivity?.SetTag("request.id", requestId);
+                        apiCallActivity?.SetTag("deployment.environment", environment);
 
+                        // W3C Trace Context headers s¹ automatycznie dodawane przez instrumentation
+                        // Baggage headers s¹ równie¿ automatycznie propagowane
                         response = await httpClient.GetAsync($"/products/{id}");
 
                         apiCallActivity?.SetTag("http.status_code", (int)response.StatusCode);

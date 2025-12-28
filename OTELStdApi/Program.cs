@@ -4,6 +4,7 @@ using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using System.Diagnostics.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,7 +43,7 @@ builder.Services.AddHttpClient("FakeStoreAPI", client =>
     client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 });
 
-// OpenTelemetry - traces i metrics
+// OpenTelemetry - traces, metrics, propagators i baggage
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r
         .AddService(serviceName, serviceVersion: serviceVersion)
@@ -58,8 +59,14 @@ builder.Services.AddOpenTelemetry()
                 // Filtruj health checks itp.
                 opts.Filter = ctx => !ctx.Request.Path.StartsWithSegments("/health");
             })
-            .AddHttpClientInstrumentation()
+            .AddHttpClientInstrumentation(opts =>
+            {
+                // Automatyczne propagowanie W3C Trace Context headers
+                opts.RecordException = true;
+            })
             .AddSource(serviceName) // W³asne ActivitySource
+            // W3C Propagators: traceparent, tracestate, baggage
+            .SetResourceBuilder(resourceBuilder)
             .AddOtlpExporter(opts =>
             {
                 opts.Endpoint = alloyEndpoint;
@@ -91,6 +98,30 @@ builder.Logging.AddOpenTelemetry(logging =>
 });
 
 var app = builder.Build();
+
+// Middleware do obs³ugi baggage i W3C Trace Context
+app.Use(async (context, next) =>
+{
+    // Generuj Request ID jeœli nie istnieje
+    var requestId = System.Diagnostics.Activity.Current?.Id ?? context.TraceIdentifier;
+    if (string.IsNullOrEmpty(requestId))
+    {
+        requestId = Guid.NewGuid().ToString();
+    }
+
+    // Dodaj do context.Items dla ³atwego dostêpu w kontrolerach
+    context.Items["RequestId"] = requestId;
+    context.Items["DeploymentEnvironment"] = builder.Environment.EnvironmentName;
+
+    // Ustaw baggage dla Current Activity
+    if (System.Diagnostics.Activity.Current != null)
+    {
+        System.Diagnostics.Activity.Current.AddTag("request.id", requestId);
+        System.Diagnostics.Activity.Current.AddTag("deployment.environment", builder.Environment.EnvironmentName);
+    }
+
+    await next();
+});
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
