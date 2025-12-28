@@ -5,6 +5,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using System.Diagnostics.Metrics;
+using OTELStdApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,6 +43,21 @@ builder.Services.AddHttpClient("FakeStoreAPI", client =>
     client.BaseAddress = new Uri(baseUrl);
     client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 });
+
+// Redis Cache
+var redisConfig = builder.Configuration.GetSection("Redis");
+var redisConnectionString = redisConfig["ConnectionString"];
+var cacheDurationMinutes = int.Parse(redisConfig["CacheDurationMinutes"] ?? "1");
+
+builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(sp =>
+{
+    var options = StackExchange.Redis.ConfigurationOptions.Parse(redisConnectionString);
+    options.AbortOnConnectFail = false;
+    return StackExchange.Redis.ConnectionMultiplexer.Connect(options);
+});
+
+// Register cache service
+builder.Services.AddScoped<ICacheService, RedisCacheService>();
 
 // OpenTelemetry - traces, metrics, propagators i baggage
 builder.Services.AddOpenTelemetry()

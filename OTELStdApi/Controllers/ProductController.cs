@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using OTELStdApi.Models;
+using OTELStdApi.Services;
 using Polly;
 
 namespace OTELStdApi.Controllers
@@ -16,6 +17,8 @@ namespace OTELStdApi.Controllers
         // Metrics - Meter
         private static readonly Meter Meter = new("my-dotnet-app");
         private static readonly Counter<long> ProductsRetrieved = Meter.CreateCounter<long>("products.retrieved");
+        private static readonly Counter<long> CacheHits = Meter.CreateCounter<long>("cache.hits");
+        private static readonly Counter<long> CacheMisses = Meter.CreateCounter<long>("cache.misses");
         private static readonly Histogram<double> ProductFetchDuration = Meter.CreateHistogram<double>("products.fetch.duration", "ms");
 
         // Polly retry policy dla 5xx b³êdów
@@ -34,16 +37,25 @@ namespace OTELStdApi.Controllers
 
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<ProductController> _logger;
+        private readonly ICacheService _cacheService;
+        private readonly IConfiguration _configuration;
 
-        public ProductController(IHttpClientFactory httpClientFactory, ILogger<ProductController> logger)
+        public ProductController(IHttpClientFactory httpClientFactory, ILogger<ProductController> logger, ICacheService cacheService, IConfiguration configuration)
         {
             _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _cacheService = cacheService;
+            _configuration = configuration;
         }
 
         /// <summary>
         /// Pobiera produkt z zewnêtrznego API (FakeStore) po ID
         /// Wrapper dla: https://fakestoreapi.com/docs#tag/Products/operation/getProductById
+        /// 
+        /// Obs³uga cache:
+        /// 1. SprawdŸ Redis cache
+        /// 2. Jeœli nie ma lub jest starsze ni¿ 1 minuta - pobierz z API
+        /// 3. Zapisz w cache z TTL=1 minuta
         /// </summary>
         /// <param name="id">ID produktu (1-20)</param>
         /// <returns>Dane produktu</returns>
@@ -77,9 +89,36 @@ namespace OTELStdApi.Controllers
                     return BadRequest(new { error = "Product ID must be greater than 0" });
                 }
 
-                var httpClient = _httpClientFactory.CreateClient("FakeStoreAPI");
+                // Klucz cache
+                var cacheKey = $"product:{id}";
+                var cacheDurationMinutes = int.Parse(_configuration["Redis:CacheDurationMinutes"] ?? "1");
+                var cacheDuration = TimeSpan.FromMinutes(cacheDurationMinutes);
 
+                // Krok 1: SprawdŸ Redis cache
+                using (var cacheCheckActivity = ActivitySource.StartActivity("CheckCache"))
+                {
+                    cacheCheckActivity?.SetTag("cache.key", cacheKey);
+
+                    var cachedProduct = await _cacheService.GetAsync<Product>(cacheKey);
+                    
+                    if (cachedProduct != null)
+                    {
+                        _logger.LogInformation("Product {ProductId} found in cache", id);
+                        CacheHits.Add(1, new KeyValuePair<string, object?>("product.id", id));
+                        cacheCheckActivity?.SetTag("cache.hit", true);
+                        activity?.SetTag("cache.hit", true);
+                        return Ok(cachedProduct);
+                    }
+
+                    CacheMisses.Add(1, new KeyValuePair<string, object?>("product.id", id));
+                    cacheCheckActivity?.SetTag("cache.hit", false);
+                    activity?.SetTag("cache.hit", false);
+                }
+
+                // Krok 2: Cache miss - pobierz z API
+                var httpClient = _httpClientFactory.CreateClient("FakeStoreAPI");
                 HttpResponseMessage response = null;
+                Product product = null;
 
                 // U¿yj Polly retry policy dla 5xx b³êdów
                 await RetryPolicy.ExecuteAsync(async () =>
@@ -104,15 +143,28 @@ namespace OTELStdApi.Controllers
                 if (response.IsSuccessStatusCode)
                 {
                     var json = await response.Content.ReadAsStringAsync();
-                    var product = System.Text.Json.JsonSerializer.Deserialize<Product>(json,
+                    product = System.Text.Json.JsonSerializer.Deserialize<Product>(json,
                         new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                    // Krok 3: Zapisz w cache z TTL
+                    if (product != null)
+                    {
+                        using (var cacheSetActivity = ActivitySource.StartActivity("SetCache"))
+                        {
+                            cacheSetActivity?.SetTag("cache.key", cacheKey);
+                            cacheSetActivity?.SetTag("cache.ttl", cacheDuration.TotalMinutes);
+
+                            await _cacheService.SetAsync(cacheKey, product, cacheDuration);
+                            _logger.LogInformation("Product {ProductId} cached for {CacheDurationMinutes} minutes", id, cacheDurationMinutes);
+                        }
+                    }
 
                     activity?.SetTag("product.title", product?.Title);
 
                     ProductsRetrieved.Add(1,
                         new KeyValuePair<string, object?>("product.category", product?.Category));
 
-                    _logger.LogInformation("Product retrieved successfully: {ProductTitle}", product?.Title);
+                    _logger.LogInformation("Product retrieved successfully from API: {ProductTitle}", product?.Title);
 
                     return Ok(product);
                 }

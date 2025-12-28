@@ -117,140 +117,133 @@ private static readonly IAsyncPolicy<HttpResponseMessage> RetryPolicy =
 | 500-599 Server Error | ?? Retry x3 z exponential backoff, jeœli siê nie uda ? zwróæ 503, log error |
 | Timeout / Network Error | ?? Retry x3, jeœli siê nie uda ? zwróæ 503, log error |
 
-## OpenTelemetry Monitoring
+## Redis Caching
 
-### Swagger UI
-```
-http://localhost:5125/swagger/index.html
-```
+### Konfiguracja
 
-### OpenAPI Contract
-```
-http://localhost:5125/openapi/v1.json
-```
-
-### Traces, Metrics & Logs
-Dostêpne w Alloy/Grafana na podstawie konfiguracji OTLP:
-- Endpoint: `http://localhost:4317` (gRPC)
-- Service Name: `OTELStdApi`
-- Service Version: `1.0.0`
-
-## W3C Trace Context & Baggage Propagation
-
-### Incoming Requests
-Aplikacja automatycznie ekstraktuje z incoming HTTP headers:
-- `traceparent` - W3C Trace Context format (version, trace-id, parent-id, trace-flags)
-- `tracestate` - W3C trace state
-- `baggage` - W3C Baggage header
-
-### Outgoing Requests (do FakeStore API)
-Aplikacja automatycznie propaguje do wychodz¹cych requestów:
-- `traceparent` - Kontynuuje distributed trace
-- `tracestate` - Stan trace'u
-- `baggage` - Baggage items (request.id, deployment.environment)
-
-**Automatyczne propagowanie jest obs³ugiwane przez:**
-- `AddHttpClientInstrumentation()` w OpenTelemetry configuration
-- W3C Propagators (wbudowane w .NET 10)
-- Activity tags w baggage
-
-### Przyk³ad Flow:
-
-```
-Client Request (with traceparent header)
-    ?
-App receives & ekstraktuje W3C headers
-    ?
-Middleware ustawia RequestId & DeploymentEnvironment w Activity
-    ?
-ProductController propaguje headers do FakeStore API
-    ?
-FakeStore API receives (traceparent, baggage headers)
-    ?
-Response back with Activity continuation
-```
-
-## Przyk³ad Obserwacji w Kodzie
-
-### Traces z Baggage
-```csharp
-using var activity = ActivitySource.StartActivity("GetProductById");
-activity?.SetTag("product.id", id);
-
-// Baggage z context
-var requestId = HttpContext.Items["RequestId"]?.ToString() ?? "unknown";
-var environment = HttpContext.Items["DeploymentEnvironment"]?.ToString() ?? "unknown";
-
-activity?.SetTag("request.id", requestId);
-activity?.SetTag("deployment.environment", environment);
-
-// Nested span propaguje baggage automatycznie
-using (var apiCallActivity = ActivitySource.StartActivity("CallFakeStoreAPI"))
+```json
 {
-    apiCallActivity?.SetTag("http.method", "GET");
-    apiCallActivity?.SetTag("http.url", $"/products/{id}");
-    // Baggage headers s¹ propagowane automatycznie do FakeStore API
-    response = await httpClient.GetAsync($"/products/{id}");
+  "Redis": {
+    "ConnectionString": "localhost:6379,password=twoje_silne_haslo_123",
+    "CacheDurationMinutes": 1
+  }
 }
 ```
 
+### Cache Flow w ProductController
+
+1. **Cache Check** - SprawdŸ Redis cache dla klucza `product:{id}`
+   - ? **Cache HIT** - Zwróæ cached product, metric `cache.hits++`
+   - ? **Cache MISS** - PrzejdŸ do kroku 2, metric `cache.misses++`
+
+2. **API Call** (Cache Miss) - Wykonaj HTTP request do FakeStore API
+   - Polly retry policy: retry x3 dla 5xx errors
+   - W3C Trace Context + Baggage propagation
+
+3. **Cache Write** - Zapisz produkt w Redis cache
+   - TTL (Time To Live): 1 minuta (konfigurowalny)
+   - Key format: `product:{id}`
+   - Value: JSON serialized Product object
+
 ### Metrics
-```csharp
-ProductsRetrieved.Add(1,
-    new KeyValuePair<string, object?>("product.category", product?.Category));
 
-ProductFetchDuration.Record(stopwatch.ElapsedMilliseconds);
+Dodane metryki do obs³ugi cache:
+
+```csharp
+private static readonly Counter<long> CacheHits = Meter.CreateCounter<long>("cache.hits");
+private static readonly Counter<long> CacheMisses = Meter.CreateCounter<long>("cache.misses");
 ```
 
-### Logs
-```csharp
-_logger.LogInformation("Fetching product with ID {ProductId}", id);
-_logger.LogError(ex, "HTTP request failed for product {ProductId}", id);
+### Architektura Cache Service
+
+```
+ProductController
+    ?
+ICacheService (interface)
+    ?
+RedisCacheService (implementation)
+    ?
+StackExchange.Redis IConnectionMultiplexer
+    ?
+Redis Server (localhost:6379)
 ```
 
-## Technologie
+### Operacje Cache
 
-- **.NET**: 10.0
-- **C#**: 14.0
-- **OpenTelemetry**: Latest (Api 1.14.0, Core)
-- **Polly**: 8.6.5 (Resilience & Transient Fault Handling)
-- **Swashbuckle**: Latest (Swagger UI)
+#### GetAsync<T> - Pobierz z cache
+```csharp
+var cachedProduct = await _cacheService.GetAsync<Product>(cacheKey);
+// Zwraca: Product | null
+// Obs³uga: JSON deserialization, logging, exception handling
+```
 
-## Uruchomienie
+#### SetAsync<T> - Zapisz do cache
+```csharp
+await _cacheService.SetAsync(cacheKey, product, cacheDuration);
+// cacheDuration: TimeSpan? (np. 1 minuta)
+// Konwertuje do Expiration dla Redis
+```
+
+#### RemoveAsync - Usuñ z cache
+```csharp
+await _cacheService.RemoveAsync(cacheKey);
+```
+
+#### ExistsAsync - SprawdŸ istnienie klucza
+```csharp
+bool exists = await _cacheService.ExistsAsync(cacheKey);
+```
+
+### Obserwabilnoœæ Cache
+
+**Traces:**
+- `CheckCache` span - sprawdzanie cache
+  - Tag: `cache.key`
+  - Tag: `cache.hit` (true/false)
+- `SetCache` span - zapis do cache
+  - Tag: `cache.key`
+  - Tag: `cache.ttl` (w minutach)
+
+**Metrics:**
+- `cache.hits` - liczba cache hits
+- `cache.misses` - liczba cache misses
+- `products.retrieved` - ³¹czna liczba pobranych produktów
+
+**Logs:**
+- "Product {ProductId} found in cache" (DEBUG)
+- "Cache hit for key: {CacheKey}" (DEBUG)
+- "Cache miss for key: {CacheKey}" (DEBUG)
+- "Product {ProductId} cached for {CacheDurationMinutes} minutes" (INFO)
+- Cache errors (ERROR)
+
+### Testowanie Cache
 
 ```bash
-dotnet run
-```
-
-Aplikacja nas³uchuje na `http://localhost:5125`
-
-## Testowanie Product Endpoint
-
-```bash
-# Zainstalowany produkt
+# Pierwszy request - cache miss, pobiera z API
 curl -X GET "http://localhost:5125/Product/1"
+# Response: Product data + logs "Cache miss"
 
-# Nie zainstalowany produkt
-curl -X GET "http://localhost:5125/Product/999"
+# Drugi request (w ci¹gu 1 minuty) - cache hit
+curl -X GET "http://localhost:5125/Product/1"
+# Response: Product data + logs "Cache hit" (szybsze)
 
-# Niewa¿ne ID
-curl -X GET "http://localhost:5125/Product/0"
+# Po 1 minucie - cache expires, znowu cache miss
+curl -X GET "http://localhost:5125/Product/1"
+# Response: Product data + logs "Cache miss"
 ```
 
-### Testowanie W3C Propagation
+### Zale¿noœci
 
-```bash
-# Request z custom W3C headers
-curl -X GET "http://localhost:5125/Product/1" \
-  -H "traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" \
-  -H "baggage: userId=alice,serverNode=DF:28,isProduction=false"
-```
+- **StackExchange.Redis** (2.10.1) - Redis client
+- Async/await - obs³uga asynchronicznych operacji
+- JSON serialization - `System.Text.Json`
+- Dependency Injection - `IServiceCollection`, `IServiceProvider`
 
 ## TODO
 
 - [ ] Dodaæ Health Checks dla FakeStore API
 - [ ] Dodaæ Circuit Breaker pattern (Polly)
-- [x] Dodaæ W3C Trace Context headers
-- [x] Dodaæ baggage propagation dla distributed tracing
+- [ ] Dodaæ W3C Trace Context headers ?
+- [ ] Dodaæ baggage propagation dla distributed tracing ?
 - [ ] Dodaæ rate limiting dla FakeStore API
-- [ ] Dodaæ caching dla produktów
+- [x] Dodaæ caching dla produktów ?
