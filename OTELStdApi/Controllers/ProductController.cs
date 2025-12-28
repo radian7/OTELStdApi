@@ -47,6 +47,7 @@ namespace OTELStdApi.Controllers
         /// </summary>
         /// <param name="id">ID produktu (1-20)</param>
         /// <returns>Dane produktu</returns>
+        // http://localhost:5125/Product/10
         [HttpGet("{id}")]
         [ProducesResponseType(typeof(Product), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
