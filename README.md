@@ -1,6 +1,6 @@
-# OTELStdApi - OpenTelemetry Standard API
+ï»¿# OTELStdApi - OpenTelemetry Standard API
 
-Projekt demonstracyjny aplikacji ASP.NET Core z pe³n¹ integracj¹ OpenTelemetry (Traces, Metrics, Logs) oraz wrapperem dla zewnêtrznych API z zaawansowan¹ obs³ug¹ b³êdów i retry'ami.
+Projekt demonstracyjny aplikacji ASP.NET Core z peÅ‚nÄ… integracjÄ… OpenTelemetry (Traces, Metrics, Logs) oraz wrapperem dla zewnÄ™trznych API z zaawansowanÄ… obsÅ‚ugÄ… bÅ‚Ä™dÃ³w i retry'ami.
 
 ## Architektura
 
@@ -11,36 +11,36 @@ Projekt integruje trzy filary observability:
 1. **Traces (Distributed Tracing)**
    - Implementacja: `System.Diagnostics.ActivitySource`
    - Eksport: OTLP (OpenTelemetry Protocol) do Alloy na `http://localhost:4317`
-   - U¿ycie: Œledzenie przebiegu ¿¹dañ, nested spans, custom tags
+   - UÅ¼ycie: Åšledzenie przebiegu Å¼Ä…daÅ„, nested spans, custom tags
    - **W3C Trace Context**: Automatyczne propagowanie `traceparent`, `tracestate` headers w outgoing HTTP requests
-   - **Baggage Propagation**: Propagowanie baggage items (request.id, deployment.environment) w ca³ej aplikacji i do zewnêtrznych API
+   - **Baggage Propagation**: Propagowanie baggage items (request.id, deployment.environment) w caÅ‚ej aplikacji i do zewnÄ™trznych API
 
 2. **Metrics**
    - Implementacja: `System.Diagnostics.Metrics.Meter` i `Counter`, `Histogram`
    - Eksport: OTLP do Alloy
-   - Przyk³ady: `orders.created`, `orders.processing.duration`, `products.retrieved`, `products.fetch.duration`
+   - PrzykÅ‚ady: `orders.created`, `orders.processing.duration`, `products.retrieved`, `products.fetch.duration`
 
 3. **Logs**
    - Implementacja: `ILogger<T>` z OpenTelemetry
    - Eksport: OTLP do Alloy
-   - Funkcje: Structured logging, scopes, kontekst ¿¹dania
+   - Funkcje: Structured logging, scopes, kontekst Å¼Ä…dania
 
 ## Endpoints API
 
 ### WeatherForecast Controller
-- **GET** `/WeatherForecast` - Pobiera prognozê pogody (demo)
+- **GET** `/WeatherForecast` - Pobiera prognozÄ™ pogody (demo)
   - Includes baggage: `request.id`, `deployment.environment`
-- **POST** `/WeatherForecast` - Tworzy zamówienie (demo z full observability)
+- **POST** `/WeatherForecast` - Tworzy zamÃ³wienie (demo z full observability)
   - Includes baggage propagation
 
 ### Product Controller
 - **GET** `/Product/{id}` - Pobiera produkt z FakeStore API
   - Wrapper dla: https://fakestoreapi.com/products/{id}
-  - Obs³uga b³êdów: 4xx (return error), 5xx (retry x3, then error)
+  - ObsÅ‚uga bÅ‚Ä™dÃ³w: 4xx (return error), 5xx (retry x3, then error)
   - Timeout: 1 sekunda
-  - Retry: Do 3 razy dla b³êdów sieciowych (Polly exponential backoff)
+  - Retry: Do 3 razy dla bÅ‚Ä™dÃ³w sieciowych (Polly exponential backoff)
   - **W3C Propagation**: Automatyczne propagowanie trace context headers do FakeStore API
-  - **Baggage Propagation**: Request ID i deployment environment s¹ propagowane do zewnêtrznego API
+  - **Baggage Propagation**: Request ID i deployment environment sÄ… propagowane do zewnÄ™trznego API
 
 ## Konfiguracja
 
@@ -75,11 +75,11 @@ app.Use(async (context, next) =>
 {
     var requestId = System.Diagnostics.Activity.Current?.Id ?? context.TraceIdentifier;
     
-    // Dodaj do context.Items dla dostêpu w kontrolerach
+    // Dodaj do context.Items dla dostÄ™pu w kontrolerach
     context.Items["RequestId"] = requestId;
     context.Items["DeploymentEnvironment"] = builder.Environment.EnvironmentName;
 
-    // Ustaw w Current Activity (propaguje siê automatycznie)
+    // Ustaw w Current Activity (propaguje siÄ™ automatycznie)
     if (System.Diagnostics.Activity.Current != null)
     {
         System.Diagnostics.Activity.Current.AddTag("request.id", requestId);
@@ -108,14 +108,14 @@ private static readonly IAsyncPolicy<HttpResponseMessage> RetryPolicy =
 - Retry 2: wait 400ms
 - Retry 3: wait 800ms
 
-## Obs³uga B³êdów w Product Controller
+## ObsÅ‚uga BÅ‚Ä™dÃ³w w Product Controller
 
 | Status Code | Akcja |
 |---|---|
-| 200 OK | ? Zwróæ produkt, log info |
-| 400-499 Client Error | ? Zwróæ b³¹d do klienta, log warning |
-| 500-599 Server Error | ?? Retry x3 z exponential backoff, jeœli siê nie uda ? zwróæ 503, log error |
-| Timeout / Network Error | ?? Retry x3, jeœli siê nie uda ? zwróæ 503, log error |
+| 200 OK | âœ… ZwrÃ³Ä‡ produkt, log info |
+| 400-499 Client Error | âŒ ZwrÃ³Ä‡ bÅ‚Ä…d do klienta, log warning |
+| 500-599 Server Error | ğŸ”„ Retry x3 z exponential backoff, jeÅ›li siÄ™ nie uda â†’ zwrÃ³Ä‡ 503, log error |
+| Timeout / Network Error | ğŸ”„ Retry x3, jeÅ›li siÄ™ nie uda â†’ zwrÃ³Ä‡ 503, log error |
 
 ## Redis Caching
 
@@ -132,9 +132,9 @@ private static readonly IAsyncPolicy<HttpResponseMessage> RetryPolicy =
 
 ### Cache Flow w ProductController
 
-1. **Cache Check** - SprawdŸ Redis cache dla klucza `product:{id}`
-   - ? **Cache HIT** - Zwróæ cached product, metric `cache.hits++`
-   - ? **Cache MISS** - PrzejdŸ do kroku 2, metric `cache.misses++`
+1. **Cache Check** - SprawdÅº Redis cache dla klucza `product:{id}`
+   - âœ… **Cache HIT** - ZwrÃ³Ä‡ cached product, metric `cache.hits++`
+   - âŒ **Cache MISS** - PrzejdÅº do kroku 2, metric `cache.misses++`
 
 2. **API Call** (Cache Miss) - Wykonaj HTTP request do FakeStore API
    - Polly retry policy: retry x3 dla 5xx errors
@@ -147,7 +147,7 @@ private static readonly IAsyncPolicy<HttpResponseMessage> RetryPolicy =
 
 ### Metrics
 
-Dodane metryki do obs³ugi cache:
+Dodane metryki do obsÅ‚ugi cache:
 
 ```csharp
 private static readonly Counter<long> CacheHits = Meter.CreateCounter<long>("cache.hits");
@@ -158,13 +158,13 @@ private static readonly Counter<long> CacheMisses = Meter.CreateCounter<long>("c
 
 ```
 ProductController
-    ?
+    â†“
 ICacheService (interface)
-    ?
+    â†“
 RedisCacheService (implementation)
-    ?
+    â†“
 StackExchange.Redis IConnectionMultiplexer
-    ?
+    â†“
 Redis Server (localhost:6379)
 ```
 
@@ -174,7 +174,7 @@ Redis Server (localhost:6379)
 ```csharp
 var cachedProduct = await _cacheService.GetAsync<Product>(cacheKey);
 // Zwraca: Product | null
-// Obs³uga: JSON deserialization, logging, exception handling
+// ObsÅ‚uga: JSON deserialization, logging, exception handling
 ```
 
 #### SetAsync<T> - Zapisz do cache
@@ -184,17 +184,17 @@ await _cacheService.SetAsync(cacheKey, product, cacheDuration);
 // Konwertuje do Expiration dla Redis
 ```
 
-#### RemoveAsync - Usuñ z cache
+#### RemoveAsync - UsuÅ„ z cache
 ```csharp
 await _cacheService.RemoveAsync(cacheKey);
 ```
 
-#### ExistsAsync - SprawdŸ istnienie klucza
+#### ExistsAsync - SprawdÅº istnienie klucza
 ```csharp
 bool exists = await _cacheService.ExistsAsync(cacheKey);
 ```
 
-### Obserwabilnoœæ Cache
+### ObserwabilnoÅ›Ä‡ Cache
 
 **Traces:**
 - `CheckCache` span - sprawdzanie cache
@@ -207,7 +207,7 @@ bool exists = await _cacheService.ExistsAsync(cacheKey);
 **Metrics:**
 - `cache.hits` - liczba cache hits
 - `cache.misses` - liczba cache misses
-- `products.retrieved` - ³¹czna liczba pobranych produktów
+- `products.retrieved` - Å‚Ä…czna liczba pobranych produktÃ³w
 
 **Logs:**
 - "Product {ProductId} found in cache" (DEBUG)
@@ -223,7 +223,7 @@ bool exists = await _cacheService.ExistsAsync(cacheKey);
 curl -X GET "http://localhost:5125/Product/1"
 # Response: Product data + logs "Cache miss"
 
-# Drugi request (w ci¹gu 1 minuty) - cache hit
+# Drugi request (w ciÄ…gu 1 minuty) - cache hit
 curl -X GET "http://localhost:5125/Product/1"
 # Response: Product data + logs "Cache hit" (szybsze)
 
@@ -232,18 +232,34 @@ curl -X GET "http://localhost:5125/Product/1"
 # Response: Product data + logs "Cache miss"
 ```
 
-### Zale¿noœci
+### ZaleÅ¼noÅ›ci
 
 - **StackExchange.Redis** (2.10.1) - Redis client
-- Async/await - obs³uga asynchronicznych operacji
+- Async/await - obsÅ‚uga asynchronicznych operacji
 - JSON serialization - `System.Text.Json`
 - Dependency Injection - `IServiceCollection`, `IServiceProvider`
 
 ## TODO
 
-- [ ] Dodaæ Health Checks dla FakeStore API
-- [ ] Dodaæ Circuit Breaker pattern (Polly)
-- [ ] Dodaæ W3C Trace Context headers ?
-- [ ] Dodaæ baggage propagation dla distributed tracing ?
-- [ ] Dodaæ rate limiting dla FakeStore API
-- [x] Dodaæ caching dla produktów ?
+- [ ] DodaÄ‡ Health Checks dla FakeStore API
+- [ ] DodaÄ‡ Circuit Breaker pattern (Polly)
+- [ ] DodaÄ‡ W3C Trace Context headers âœ…
+- [ ] DodaÄ‡ baggage propagation dla distributed tracing âœ…
+- [ ] DodaÄ‡ rate limiting dla FakeStore API
+- [x] DodaÄ‡ caching dla produktÃ³w âœ…
+
+## PrzykÅ‚adowe Zapytanie
+
+Request: GET /Product/1
+    â†“
+[1] CheckCache("product:1") â†’ Redis
+    â”œâ”€ HIT? â†’ Return cached product (fast)
+    â””â”€ MISS? â†’ Continue to step 2
+    â†“
+[2] CallFakeStoreAPI("https://fakestoreapi.com/products/1")
+    â”œâ”€ 5xx error? â†’ Retry x3 (Polly)
+    â””â”€ Success? â†’ Continue to step 3
+    â†“
+[3] SetCache("product:1", product, 1 minute) â†’ Redis
+    â†“
+Return product to client
