@@ -31,6 +31,17 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(); // http://localhost:5125/swagger/index.html
 builder.Services.AddOpenApi();
 
+// HttpClientFactory dla FakeStore API
+var fakeStoreConfig = builder.Configuration.GetSection("ExternalApis:FakeStore");
+var baseUrl = fakeStoreConfig["BaseUrl"];
+var timeoutSeconds = int.Parse(fakeStoreConfig["TimeoutSeconds"] ?? "1");
+
+builder.Services.AddHttpClient("FakeStoreAPI", client =>
+{
+    client.BaseAddress = new Uri(baseUrl);
+    client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+});
+
 // OpenTelemetry - traces i metrics
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r
