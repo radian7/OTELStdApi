@@ -6,6 +6,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using System.Diagnostics.Metrics;
 using OTELStdApi.Services;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -58,6 +59,19 @@ builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(sp =>
 
 // Register cache service
 builder.Services.AddScoped<ICacheService, RedisCacheService>();
+
+// PostgreSQL Database
+var connectionString = builder.Configuration.GetConnectionString("OrderDatabase");
+builder.Services.AddDbContext<OTELStdApi.Data.OrderDbContext>(options =>
+{
+    options.UseNpgsql(connectionString);
+});
+
+// Register Repository and Unit of Work
+builder.Services.AddScoped<OTELStdApi.Data.Repositories.IUnitOfWork, OTELStdApi.Data.Repositories.UnitOfWork>();
+
+// Register Services
+builder.Services.AddScoped<IOrderService, OrderService>();
 
 // OpenTelemetry - traces, metrics, propagators i baggage
 builder.Services.AddOpenTelemetry()

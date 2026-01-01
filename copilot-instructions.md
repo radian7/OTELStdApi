@@ -51,6 +51,24 @@
 - 4) Database schema changes
 
 
+### Guidelines for Observability
 
+- use logging, metrics and traces in OTEL standard
+
+#### Traces (Distributed Tracing)
+- Implementacja: System.Diagnostics.ActivitySource
+- Eksport: OTLP (OpenTelemetry Protocol) 
+- Użycie: Śledzenie przebiegu żądań, nested spans, custom tags
+- W3C Trace Context: Automatyczne propagowanie traceparent, tracestate headers w outgoing HTTP requests
+- Baggage Propagation: Propagowanie baggage items (request.id, deployment.environment) w całej aplikacji i do zewnętrznych API
+
+#### metrics
+- Implementacja: System.Diagnostics.Metrics.Meter i Counter, Histogram
+- Eksport: OTLP (OpenTelemetry Protocol) 
+
+#### logs
+- mplementacja: ILogger<T> z OpenTelemetry
+- Eksport: OTLP do Alloy
+- Funkcje: Structured logging, scopes, kontekst żądania
 
 

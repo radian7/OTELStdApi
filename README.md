@@ -30,7 +30,10 @@ Projekt integruje trzy filary observability:
 ### WeatherForecast Controller
 - **GET** `/WeatherForecast` - Pobiera prognozę pogody (demo)
   - Includes baggage: `request.id`, `deployment.environment`
-- **POST** `/WeatherForecast` - Tworzy zamówienie (demo z full observability)
+- **POST** `/WeatherForecast` - Tworzy zamówienie w bazie PostgreSQL
+  - Obsługa: Repository + Unit of Work + Service Layer
+  - Zapis do bazy danych z full observability
+  - Zwraca: OrderId, OrderNumber, Status, CreatedAt
   - Includes baggage propagation
 
 ### Product Controller
@@ -41,6 +44,7 @@ Projekt integruje trzy filary observability:
   - Retry: Do 3 razy dla błędów sieciowych (Polly exponential backoff)
   - **W3C Propagation**: Automatyczne propagowanie trace context headers do FakeStore API
   - **Baggage Propagation**: Request ID i deployment environment są propagowane do zewnętrznego API
+  - **Redis Cache**: Cache z TTL=1 minuta
 
 ## Konfiguracja
 
@@ -48,12 +52,19 @@ Projekt integruje trzy filary observability:
 
 ```json
 {
+  "ConnectionStrings": {
+    "OrderDatabase": "Host=localhost;Port=5432;Database=OTELStdApiDb;Username=otelstdapi_user;Password=your-secure-password-here"
+  },
   "ExternalApis": {
     "FakeStore": {
       "BaseUrl": "https://fakestoreapi.com",
       "TimeoutSeconds": 1,
       "RetryMaxAttempts": 3
     }
+  },
+  "Redis": {
+    "ConnectionString": "localhost:6379,password=twoje_silne_haslo_123",
+    "CacheDurationMinutes": 1
   }
 }
 ```
@@ -116,6 +127,163 @@ private static readonly IAsyncPolicy<HttpResponseMessage> RetryPolicy =
 | 400-499 Client Error | ❌ Zwróć błąd do klienta, log warning |
 | 500-599 Server Error | 🔄 Retry x3 z exponential backoff, jeśli się nie uda → zwróć 503, log error |
 | Timeout / Network Error | 🔄 Retry x3, jeśli się nie uda → zwróć 503, log error |
+
+## PostgreSQL Database
+
+### Konfiguracja
+
+```json
+{
+  "ConnectionStrings": {
+    "OrderDatabase": "Host=localhost;Port=5432;Database=OTELStdApiDb;Username=otelstdapi_user;Password=your-secure-password-here"
+  }
+}
+```
+
+### Architecture Patterns
+
+Projekt wykorzystuje następujące wzorce zgodnie z `copilot-instructions.md`:
+
+- **Repository Pattern** - Abstrakcja dostępu do danych
+- **Unit of Work Pattern** - Koordynacja operacji na repozytoriach i transakcji
+- **Service Layer** - Logika biznesowa oddzielona od kontrolerów
+
+### Database Schema
+
+#### Orders Table
+
+| Column | Type | Constraints |
+|---|---|---|
+| Id | UUID | PRIMARY KEY |
+| OrderNumber | VARCHAR(100) | NOT NULL, UNIQUE |
+| CustomerId | VARCHAR(200) | NOT NULL |
+| CustomerType | VARCHAR(100) | NOT NULL |
+| TotalAmount | DECIMAL(18,2) | NOT NULL |
+| Status | VARCHAR(50) | NOT NULL, DEFAULT 'Pending' |
+| CreatedAt | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
+| UpdatedAt | TIMESTAMP | NULL |
+
+**Indexes:**
+- Unique index on `OrderNumber`
+- Index on `CustomerId` (for customer queries)
+
+### Components
+
+#### Entity
+- `Order` - Model reprezentujący zamówienie
+
+#### DbContext
+- `OrderDbContext` - EF Core DbContext z:
+  - Connection pooling
+  - Query tracking optimization (`AsNoTracking()` for read-only)
+  - Proper indexing strategy
+
+#### Repository Layer
+- `IOrderRepository` - Interface operacji na danych
+- `OrderRepository` - Implementacja z optymalizowanymi zapytaniami
+- `IUnitOfWork` - Interface zarządzania transakcjami
+- `UnitOfWork` - Koordynacja repozytoriów i SaveChanges
+
+#### Service Layer
+- `IOrderService` - Interface logiki biznesowej
+- `OrderService` - Implementacja z:
+  - Generowanie unikalnych numerów zamówień (`ORD-YYYYMMDD-XXXXXXXX`)
+  - Zapis do bazy PostgreSQL
+  - Full observability (traces, metrics, logs)
+
+### Order Creation Flow
+
+```
+POST /WeatherForecast
+    ↓
+WeatherForecastController.CreateOrder()
+    ↓
+IOrderService.CreateOrderAsync()
+    ↓
+Generate OrderNumber
+    ↓
+IUnitOfWork.Orders.AddAsync(order)
+    ↓
+IUnitOfWork.SaveChangesAsync() → PostgreSQL
+    ↓
+Return Order (Id, OrderNumber, Status, CreatedAt)
+```
+
+### Observability
+
+**Traces:**
+- `OrderService.CreateOrder` - główny span tworzenia zamówienia
+  - Tags: `customer.id`, `customer.type`, `order.amount`, `order.id`, `order.number`
+- `OrderService.SaveChanges` - span zapisu do bazy
+  - Tag: `order.number`
+
+**Metrics:**
+- `orders.created.db` (Counter) - liczba zamówień utworzonych w bazie
+- `orders.db.save.duration` (Histogram) - czas zapisu do bazy (ms)
+
+**Logs (DEBUG level):**
+- "Creating order in database: {OrderNumber} for customer {CustomerId}"
+- "Order saved to database in {ElapsedMilliseconds}ms"
+- "Order created successfully: {OrderNumber}, OrderId: {OrderId}" (INFO)
+
+### Database Setup
+
+#### 1. Utwórz bazę danych i użytkownika
+
+```bash
+# Login as postgres superuser
+psql -U postgres
+
+# Create database
+CREATE DATABASE "OTELStdApiDb";
+
+# Create user
+CREATE USER otelstdapi_user WITH PASSWORD 'your-secure-password-here';
+
+# Grant privileges
+GRANT ALL PRIVILEGES ON DATABASE "OTELStdApiDb" TO otelstdapi_user;
+
+# Connect to database
+\c OTELStdApiDb
+
+# Grant schema privileges
+GRANT ALL ON SCHEMA public TO otelstdapi_user;
+```
+
+#### 2. Uruchom migracje
+
+```bash
+# Apply migrations to create schema
+dotnet ef database update --context OrderDbContext --project OTELStdApi/OTELStdApi.csproj
+
+# Verify schema
+psql -U otelstdapi_user -d OTELStdApiDb -c "\d Orders"
+```
+
+#### 3. Testowanie
+
+```bash
+# Create order
+curl -X POST "http://localhost:5125/WeatherForecast" \
+  -H "Content-Type: application/json" \
+  -d '{"CustomerId": "CUST-001", "CustomerType": "Premium", "TotalAmount": 1250.50}'
+
+# Response:
+# {
+#   "orderId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+#   "orderNumber": "ORD-20250101-A1B2C3D4",
+#   "status": "Pending",
+#   "createdAt": "2025-01-01T10:30:00Z"
+# }
+
+# Verify in database
+psql -U otelstdapi_user -d OTELStdApiDb -c "SELECT * FROM \"Orders\";"
+```
+
+#### 4. ADR (Architecture Decision Record)
+
+Szczegółowa dokumentacja decyzji architektonicznych:
+- [ADR-001: Order Database Schema](/docs/adr/001-order-database-schema.md)
 
 ## Redis Caching
 
@@ -238,6 +406,24 @@ curl -X GET "http://localhost:5125/Product/1"
 - Async/await - obsługa asynchronicznych operacji
 - JSON serialization - `System.Text.Json`
 - Dependency Injection - `IServiceCollection`, `IServiceProvider`
+
+## Technologie
+
+- **.NET**: 10.0
+- **C#**: 14.0
+- **OpenTelemetry**: Latest (Api 1.14.0)
+- **Entity Framework Core**: 10.0.1
+- **Npgsql.EntityFrameworkCore.PostgreSQL**: 10.0.0 (PostgreSQL provider for EF Core)
+- **PostgreSQL**: Database backend
+- **Polly**: 8.6.5 (Resilience & Transient Fault Handling)
+- **StackExchange.Redis**: 2.10.1 (Redis cache client)
+- **Swashbuckle**: Latest (Swagger UI)
+
+### Architecture Patterns
+- Repository Pattern
+- Unit of Work Pattern
+- Service Layer Pattern
+- Dependency Injection
 
 ## TODO
 

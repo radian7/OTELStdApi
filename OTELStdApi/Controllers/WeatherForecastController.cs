@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using OTELStdApi.Services;
 
 namespace OTELStdApi.Controllers
 {
@@ -17,10 +18,12 @@ namespace OTELStdApi.Controllers
         private static readonly Histogram<double> OrderProcessingTime = Meter.CreateHistogram<double>("orders.processing.duration", "ms");
 
         private readonly ILogger<WeatherForecastController> _logger;
+        private readonly IOrderService _orderService;
 
-        public WeatherForecastController(ILogger<WeatherForecastController> logger)
+        public WeatherForecastController(ILogger<WeatherForecastController> logger, IOrderService orderService)
         {
             _logger = logger;
+            _orderService = orderService;
         }
 
         private static readonly string[] Summaries =
@@ -81,16 +84,26 @@ namespace OTELStdApi.Controllers
                     validationActivity?.SetTag("validation.result", "success");
                 }
 
-                // Symulacja przetwarzania
-                await Task.Delay(100);
+                // Create order in PostgreSQL database using OrderService
+                var order = await _orderService.CreateOrderAsync(
+                    request.CustomerId,
+                    request.CustomerType,
+                    request.TotalAmount);
 
                 // Metryki
                 OrdersCreated.Add(1,
                     new KeyValuePair<string, object?>("customer.type", request.CustomerType));
 
-                _logger.LogInformation("Order created successfully for customer {CustomerId}", request.CustomerId);
+                _logger.LogInformation("Order created successfully for customer {CustomerId}, OrderId: {OrderId}", 
+                    request.CustomerId, order.Id);
 
-                return Ok(new { OrderId = Guid.NewGuid() });
+                return Ok(new 
+                { 
+                    OrderId = order.Id, 
+                    OrderNumber = order.OrderNumber,
+                    Status = order.Status,
+                    CreatedAt = order.CreatedAt
+                });
             }
             catch (Exception ex)
             {
