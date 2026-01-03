@@ -13,10 +13,10 @@ var builder = WebApplication.CreateBuilder(args);
 // Konfiguracja
 var serviceName = "OTELStdApi";
 var serviceVersion = "1.0.0";
-var alloyEndpoint = new Uri("http://localhost:4317"); // gRPC
-//var alloyEndpoint = new Uri("http://localhost:4318"); // http
+var otlpEndpoint = new Uri("http://localhost:4317"); // gRPC
+//var otlpEndpoint = new Uri("http://localhost:4318"); // http
 
-// Resource builder - wspólne atrybuty dla wszystkich sygna³ów
+// Resource builder - wspï¿½lne atrybuty dla wszystkich sygnaï¿½ï¿½w
 var resourceBuilder = ResourceBuilder.CreateDefault()
     .AddService(serviceName, serviceVersion: serviceVersion)
     .AddAttributes(new Dictionary<string, object>
@@ -94,12 +94,12 @@ builder.Services.AddOpenTelemetry()
                 // Automatyczne propagowanie W3C Trace Context headers
                 opts.RecordException = true;
             })
-            .AddSource(serviceName) // W³asne ActivitySource
+            .AddSource(serviceName) // Wï¿½asne ActivitySource
             // W3C Propagators: traceparent, tracestate, baggage
             .SetResourceBuilder(resourceBuilder)
             .AddOtlpExporter(opts =>
             {
-                opts.Endpoint = alloyEndpoint;
+                opts.Endpoint = otlpEndpoint;
             });
     })
     .WithMetrics(metrics =>
@@ -108,10 +108,10 @@ builder.Services.AddOpenTelemetry()
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
             //.AddRuntimeInstrumentation()
-            .AddMeter(serviceName) // W³asne Meter
+            .AddMeter(serviceName) // Wï¿½asne Meter
             .AddOtlpExporter(opts =>
             {
-                opts.Endpoint = alloyEndpoint;
+                opts.Endpoint = otlpEndpoint;
             });
     });
 
@@ -123,23 +123,23 @@ builder.Logging.AddOpenTelemetry(logging =>
     logging.IncludeScopes = true;
     logging.AddOtlpExporter(opts =>
     {
-        opts.Endpoint = alloyEndpoint;
+        opts.Endpoint = otlpEndpoint;
     });
 });
 
 var app = builder.Build();
 
-// Middleware do obs³ugi baggage i W3C Trace Context
+// Middleware do obsï¿½ugi baggage i W3C Trace Context
 app.Use(async (context, next) =>
 {
-    // Generuj Request ID jeœli nie istnieje
+    // Generuj Request ID jeï¿½li nie istnieje
     var requestId = System.Diagnostics.Activity.Current?.Id ?? context.TraceIdentifier;
     if (string.IsNullOrEmpty(requestId))
     {
         requestId = Guid.NewGuid().ToString();
     }
 
-    // Dodaj do context.Items dla ³atwego dostêpu w kontrolerach
+    // Dodaj do context.Items dla ï¿½atwego dostï¿½pu w kontrolerach
     context.Items["RequestId"] = requestId;
     context.Items["DeploymentEnvironment"] = builder.Environment.EnvironmentName;
 
