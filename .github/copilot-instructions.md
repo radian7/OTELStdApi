@@ -151,6 +151,27 @@ Format: `ORD-YYYYMMDD-XXXXXXXX` (8 uppercase hex chars from GUID)
 var orderNumber = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString().Substring(0, 8).ToUpper()}";
 ```
 
+### ENTITY_FRAMEWORK
+
+- Use the repository and unit of work patterns to abstract data access logic and simplify testing
+- Implement eager loading with Include() to avoid N+1 query problems for {{entity_relationships}}
+- Use migrations for database schema changes and version control with proper naming conventions
+- Apply appropriate tracking behavior (AsNoTracking() for read-only queries) to optimize performance
+- Implement query optimization techniques like compiled queries for frequently executed database operations
+- Use value conversions for complex property transformations and proper handling of {{custom_data_types}}
+
+
+
+## DATABASE
+
+### Guidelines for SQL
+
+#### POSTGRES
+
+- Use connection pooling to manage database connections efficiently
+- Implement JSONB columns for semi-structured data instead of creating many tables for {{flexible_data}}
+
+
 ## Configuration Management
 
 **Settings hierarchy**: `appsettings.json` → `appsettings.Development.json` (override)
