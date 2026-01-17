@@ -2,44 +2,48 @@
 
 ## Project Overview
 
-**OTELStdApi** is a .NET 10.0 demonstration API showcasing comprehensive OpenTelemetry integration (traces, metrics, logs) with PostgreSQL, Redis caching, and external API integration with resilience patterns.
+**OTELStdApi** is a .NET 10.0 demonstration API showcasing comprehensive OpenTelemetry integration (traces, metrics, logs) with PostgreSQL, Redis caching, and external API integration with Polly resilience patterns.
+
+**Stack**: ASP.NET Core 10.0 • PostgreSQL + EF Core • Redis • OpenTelemetry (OTLP) • Polly • Swagger
 
 ## Architecture Patterns
 
-### Data Access Layer
-- **Repository Pattern** + **Unit of Work Pattern** for database operations
-- Always use `IUnitOfWork` for transactions, never call `DbContext` directly from controllers
-- Repositories use `AsNoTracking()` for all read-only queries
-- Service layer (`OrderService`) coordinates business logic between controllers and repositories
+### Data Access Layer (Repository + UnitOfWork)
+**Controller → Service → UnitOfWork → Repository → DbContext**
 
-**Example flow**: Controller → Service → UnitOfWork → Repository → DbContext
+- Always use `IUnitOfWork` for transactions; never call `DbContext` directly from controllers
+- Repositories use `AsNoTracking()` for read-only queries to optimize memory
+- Services coordinate business logic and observability instrumentation
 
 ```csharp
-// ✅ Correct: Use service layer with UnitOfWork
+// ✅ Correct: Use service layer
 await _orderService.CreateOrderAsync(customerId, customerType, totalAmount);
 
 // ❌ Wrong: Direct DbContext access from controller
 await _context.Orders.AddAsync(order);
 ```
 
-### Service Layer
-- Services (e.g., `OrderService`, `RedisCacheService`) implement interfaces (`IOrderService`, `ICacheService`)
-- Services handle business logic, observability instrumentation, and coordinate repository calls
-- Register services as scoped: `builder.Services.AddScoped<IOrderService, OrderService>()`
+### Service Registration
+```csharp
+builder.Services.AddScoped<IOrderService, OrderService>();
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddScoped<ICacheService, RedisCacheService>();
+```
 
 ## OpenTelemetry Observability
 
-### Critical Pattern: Instrument ALL new features with traces, metrics, and logs
-
-**ActivitySource & Meter naming**: Use `"my-dotnet-app"` (not service name) for consistency with existing code.
+### ⚠️ CRITICAL: Naming Convention
+**Always use `"my-dotnet-app"` for ActivitySource and Meter names** (not "OTELStdApi" or service name).
 
 ```csharp
-// Define at class level
+// ✅ Required pattern - used throughout the codebase
 private static readonly ActivitySource ActivitySource = new("my-dotnet-app");
 private static readonly Meter Meter = new("my-dotnet-app");
 private static readonly Counter<long> MyCounter = Meter.CreateCounter<long>("my.operation.count");
 private static readonly Histogram<double> MyDuration = Meter.CreateHistogram<double>("my.operation.duration", "ms");
 ```
+
+### Instrumentation Pattern: ALL new features must include traces, metrics, and logs
 
 ### Trace Spans Pattern
 - Create spans for: API calls, database operations, cache operations, business logic
@@ -59,11 +63,19 @@ using (var nestedActivity = ActivitySource.StartActivity("ServiceName.SubOperati
 }
 ```
 
-### W3C Trace Context & Baggage
-- **Automatic propagation**: `HttpClientInstrumentation` auto-adds `traceparent`, `tracestate`, `baggage` headers
-- **Baggage middleware** (in `Program.cs`) sets: `request.id`, `deployment.environment` for ALL requests
-- Access baggage in controllers: `HttpContext.Items["RequestId"]`, `HttpContext.Items["DeploymentEnvironment"]`
-- Add to activities: `activity?.SetTag("request.id", requestId)`
+### W3C Trace Context & Baggage Propagation
+- **Automatic**: `HttpClientInstrumentation` propagates `traceparent`, `tracestate`, `baggage` headers to external APIs
+- **Baggage middleware** ([Program.cs](../OTELStdApi/Program.cs#L105)) sets context for ALL requests:
+  ```csharp
+  context.Items["RequestId"] = requestId;
+  context.Items["DeploymentEnvironment"] = builder.Environment.EnvironmentName;
+  Activity.Current?.AddTag("request.id", requestId);
+  ```
+- **Access in controllers**: 
+  ```csharp
+  var requestId = HttpContext.Items["RequestId"]?.ToString() ?? "unknown";
+  activity?.SetTag("request.id", requestId);
+  ```
 
 ### Metrics Guidelines
 - Use **Counter** for cumulative counts (e.g., `orders.created`, `cache.hits`)
@@ -136,67 +148,89 @@ await _cacheService.SetAsync(cacheKey, data, ttl);
 
 **Cache key format**: Use colon-separated namespaces: `"entity:id"` (e.g., `"product:10"`)
 
-## Database Operations
+## Configuration Management
 
-### Entity Framework Core Conventions
-- Migrations: Run `dotnet ef migrations add MigrationName --context OrderDbContext` for schema changes
-- Always define indexes in `OnModelCreating()` for foreign keys and frequently queried columns
-- Use `AsNoTracking()` in repositories for read-only queries
-- Connection pooling is enabled by default via `AddDbContext()`
+**Settings hierarchy**: `appsettings.json` → `appsettings.Development.json` (overrides) → User Secrets
 
-### Order Number Generation Pattern
+### Required Configuration Sections
+```json
+{
+  "ConnectionStrings": {
+    "OrderDatabase": "Host=localhost;Port=5432;Database=OTELStdApiDb;Username=otelstdapi_user;Password=***"
+  },
+  "ExternalApis": {
+    "FakeStore": {
+      "BaseUrl": "https://fakestoreapi.com",
+      "TimeoutSeconds": 1,
+      "RetryMaxAttempts": 3
+    }
+  },
+  "Redis": {
+    "ConnectionString": "localhost:6379,password=***",
+    "CacheDurationMinutes": 1
+  }
+}
+```
+
+**Access pattern**: `_configuration["Redis:CacheDurationMinutes"]` or `_configuration.GetSection("ExternalApis:FakeStore")`
+
+## Database Conventions
+
+### Entity Framework Core Best Practices
+- **Migrations**: `dotnet ef migrations add MigrationName --context OrderDbContext`
+- **Indexes**: Define in `OnModelCreating()` for foreign keys and frequently queried columns
+- **Read queries**: Use `AsNoTracking()` in repositories for all read-only operations
+- **Connection pooling**: Enabled by default via `AddDbContext()`
+
+### Order Number Generation
 Format: `ORD-YYYYMMDD-XXXXXXXX` (8 uppercase hex chars from GUID)
 
 ```csharp
 var orderNumber = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString().Substring(0, 8).ToUpper()}";
+// Example: "ORD-20260117-A1B2C3D4"
 ```
 
-### ENTITY_FRAMEWORK
 
-- Use the repository and unit of work patterns to abstract data access logic and simplify testing
-- Implement eager loading with Include() to avoid N+1 query problems for {{entity_relationships}}
-- Use migrations for database schema changes and version control with proper naming conventions
-- Apply appropriate tracking behavior (AsNoTracking() for read-only queries) to optimize performance
-- Implement query optimization techniques like compiled queries for frequently executed database operations
-- Use value conversions for complex property transformations and proper handling of {{custom_data_types}}
+## Development Workflows
 
-
-
-## DATABASE
-
-### Guidelines for SQL
-
-#### POSTGRES
-
-- Use connection pooling to manage database connections efficiently
-- Implement JSONB columns for semi-structured data instead of creating many tables for {{flexible_data}}
-
-
-## Configuration Management
-
-**Settings hierarchy**: `appsettings.json` → `appsettings.Development.json` (override)
-
-**Required settings sections**:
-- `ConnectionStrings:OrderDatabase` - PostgreSQL connection string
-- `ExternalApis:FakeStore` - External API config (BaseUrl, TimeoutSeconds, RetryMaxAttempts)
-- `Redis` - Cache config (ConnectionString, CacheDurationMinutes)
-
-Access via `IConfiguration`: `_configuration["Redis:CacheDurationMinutes"]` or `_configuration.GetSection("ExternalApis:FakeStore")`
-
-## Development Commands
-
+### Build & Run
 ```bash
-# Build & Run
 dotnet build
 dotnet run --project OTELStdApi/OTELStdApi.csproj
+# API: http://localhost:5125
+# Swagger: http://localhost:5125/swagger/index.html
+```
 
-# Database migrations
+### Database Setup & Migrations
+```bash
+# Create PostgreSQL database (psql)
+CREATE DATABASE "OTELStdApiDb";
+CREATE USER otelstdapi_user WITH PASSWORD 'your-secure-password-here';
+GRANT ALL PRIVILEGES ON DATABASE "OTELStdApiDb" TO otelstdapi_user;
+
+# Create migration
 dotnet ef migrations add MigrationName --context OrderDbContext --project OTELStdApi/OTELStdApi.csproj
+
+# Apply migrations
 dotnet ef database update --context OrderDbContext --project OTELStdApi/OTELStdApi.csproj
 
-# Docker
+# Verify schema
+psql -U otelstdapi_user -d OTELStdApiDb -c "\d Orders"
+```
+
+### Docker
+```bash
 docker build -t otelstdapi .
 docker run -p 5125:8080 otelstdapi
+```
+
+### Redis Setup
+```bash
+# Start Redis with Docker
+docker run -d --name redis -p 6379:6379 redis:alpine redis-server --requirepass twoje_silne_haslo_123
+
+# Verify connection
+redis-cli -a twoje_silne_haslo_123 ping
 ```
 
 ## Architecture Decision Records (ADRs)
@@ -225,20 +259,42 @@ Reference: [ADR-001: Order Database Schema](../docs/adr/001-order-database-schem
 - [UnitOfWork.cs](../OTELStdApi/Data/Repositories/UnitOfWork.cs) - Transaction coordination
 - [RedisCacheService.cs](../OTELStdApi/Services/RedisCacheService.cs) - Cache abstraction
 
-## Testing Endpoints
+## API Endpoints & Testing
 
+### Health Check
 ```bash
-# Health check
 GET http://localhost:5125/health
+# Response: 200 OK
+```
 
-# Get product (with caching)
+### Product Controller (External API + Redis Cache)
+```bash
+# First call - Cache MISS, fetches from FakeStore API
 GET http://localhost:5125/Product/1
+# Response: {"id":1,"title":"Fjallraven...","price":109.95,...}
 
-# Create order (writes to PostgreSQL)
+# Second call (within 1 min) - Cache HIT
+GET http://localhost:5125/Product/1
+# Response: Same, but faster (from Redis)
+```
+
+### WeatherForecast Controller (Order Creation with PostgreSQL)
+```bash
 POST http://localhost:5125/WeatherForecast
 Content-Type: application/json
 {"CustomerId": "CUST-001", "CustomerType": "Premium", "TotalAmount": 1250.50}
 
-# Swagger UI
-http://localhost:5125/swagger/index.html
+# Response:
+{
+  "orderId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "orderNumber": "ORD-20260117-A1B2C3D4",
+  "status": "Pending",
+  "createdAt": "2026-01-17T10:30:00Z"
+}
+
+# Verify in database
+psql -U otelstdapi_user -d OTELStdApiDb -c "SELECT * FROM \"Orders\";"
 ```
+
+### Swagger UI
+http://localhost:5125/swagger/index.html
