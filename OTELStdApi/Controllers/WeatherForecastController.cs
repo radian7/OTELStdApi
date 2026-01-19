@@ -35,7 +35,7 @@ namespace OTELStdApi.Controllers
         [HttpGet(Name = "GetWeatherForecast")]
         public IEnumerable<WeatherForecast> Get()
         {
-           // Rozpocznij w³asny span
+           // Rozpocznij wï¿½asny span
             using var activity = ActivitySource.StartActivity("GetWeatherForecast");
             
             // Dodaj baggage z kontekstu
@@ -60,7 +60,7 @@ namespace OTELStdApi.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateOrder(CreateOrderRequest request)
         {
-            // Rozpocznij w³asny span
+            // Rozpocznij wï¿½asny span
             using var activity = ActivitySource.StartActivity("CreateOrder");
             activity?.SetTag("order.customer_id", request.CustomerId);
 
@@ -88,7 +88,8 @@ namespace OTELStdApi.Controllers
                 var order = await _orderService.CreateOrderAsync(
                     request.CustomerId,
                     request.CustomerType,
-                    request.TotalAmount);
+                    request.TotalAmount,
+                    request.Description);
 
                 // Metryki
                 OrdersCreated.Add(1,
@@ -135,4 +136,4 @@ namespace OTELStdApi.Controllers
     }
 }
 
-public record CreateOrderRequest(string CustomerId, string CustomerType, decimal TotalAmount);
+public record CreateOrderRequest(string CustomerId, string CustomerType, decimal TotalAmount, string? Description = null);

@@ -54,6 +54,9 @@ namespace OTELStdApi.Data
                     .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                 entity.Property(e => e.UpdatedAt);
+
+                entity.Property(e => e.Description)
+                    .HasMaxLength(500);
             });
         }
     }

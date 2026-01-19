@@ -33,5 +33,8 @@ namespace OTELStdApi.Data.Entities
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         public DateTime? UpdatedAt { get; set; }
+
+        [StringLength(500)]
+        public string? Description { get; set; }
     }
 }

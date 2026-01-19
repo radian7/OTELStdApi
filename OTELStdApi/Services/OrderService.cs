@@ -22,7 +22,7 @@ namespace OTELStdApi.Services
             _logger = logger;
         }
 
-        public async Task<Order> CreateOrderAsync(string customerId, string customerType, decimal totalAmount)
+        public async Task<Order> CreateOrderAsync(string customerId, string customerType, decimal totalAmount, string? description = null)
         {
             using var activity = ActivitySource.StartActivity("OrderService.CreateOrder");
             activity?.SetTag("customer.id", customerId);
@@ -44,7 +44,8 @@ namespace OTELStdApi.Services
                     CustomerType = customerType,
                     TotalAmount = totalAmount,
                     Status = "Pending",
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.UtcNow,
+                    Description = description
                 };
 
                 _logger.LogDebug("Creating order in database: {OrderNumber} for customer {CustomerId}", orderNumber, customerId);
